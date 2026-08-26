@@ -12,14 +12,12 @@ Run:  python main.py
 import os
 import json
 import base64
-from pathlib import Path
 
 import httpx
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
 from anthropic import Anthropic
 
 # ---------------------------------------------------------------------------
@@ -41,8 +39,6 @@ PORT = int(os.getenv("PORT", "3000"))
 # The scoring model, per the hackathon spec.
 SCORING_MODEL = "claude-sonnet-4-6"
 
-BASE_DIR = Path(__file__).resolve().parent
-FRONTEND_FILE = BASE_DIR / "hackathon_scorer.html"
 GITHUB_API = "https://api.github.com"
 
 # Max points per criterion — used to validate/clamp model output.
@@ -320,13 +316,6 @@ def score_with_claude(
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
-@app.get("/")
-async def serve_frontend():
-    if not FRONTEND_FILE.exists():
-        raise HTTPException(status_code=404, detail="hackathon_scorer.html not found")
-    return FileResponse(FRONTEND_FILE, media_type="text/html")
-
-
 @app.get("/api/branches")
 async def api_branches():
     async with httpx.AsyncClient(timeout=30.0) as client:

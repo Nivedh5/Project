@@ -1,5 +1,0 @@
-Screenshot 1 (scorer-ui.png): Live leaderboard at localhost:3000 showing
-geetha-chandrasekar/hackathon-scorer scored 78/100 with real-time bar charts
-across all 5 criteria. KPI cards show 1 submission, 1 scored, avg 78, top 78.
-System confirmed working end-to-end against live GitHub repo Experience-org/hackathon-aug26.
-Anthropic API integration verified — real scoring call confirmed returning structured JSON.
