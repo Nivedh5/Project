@@ -67,17 +67,52 @@ CREATE TABLE IF NOT EXISTS review_requests (
 );
 
 -- Search hits name/email, and every list query filters on status, so both are
--- worth indexing even at demo scale.
+-- worth indexing even at demo scale. The index on mail_status is created
+-- after `_migrate` instead of here — on a pre-existing database this script
+-- runs before that column has been added, and an index on a column that
+-- doesn't exist yet is a SQLite error.
 CREATE INDEX IF NOT EXISTS idx_rr_status ON review_requests (status);
 CREATE INDEX IF NOT EXISTS idx_rr_name   ON review_requests (customer_name);
 CREATE INDEX IF NOT EXISTS idx_rr_email  ON review_requests (customer_email);
-CREATE INDEX IF NOT EXISTS idx_rr_mail   ON review_requests (mail_status);
+
+-- A brand-new table needs none of the ordering care above — there is no
+-- pre-existing copy of it missing a column.
+CREATE TABLE IF NOT EXISTS activity_log (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at    TEXT    NOT NULL,
+    action        TEXT    NOT NULL,
+    -- The row an action was about, when it was about one row rather than the
+    -- whole account (a bulk send, a reset). No foreign key: the request this
+    -- pointed at may since have been deleted by a reset, and the log should
+    -- still read sensibly — customer_name is copied in below for exactly
+    -- that reason, rather than looked up through request_id later.
+    request_id    INTEGER,
+    customer_name TEXT,
+    detail        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_log (created_at);
 """
 
 def connect() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def log_activity(
+    conn: sqlite3.Connection,
+    action: str,
+    request_id: int | None = None,
+    customer_name: str | None = None,
+    detail: str | None = None,
+) -> None:
+    """Record one row of history. Caller commits — this joins whatever
+    transaction is already open rather than forcing its own."""
+    conn.execute(
+        "INSERT INTO activity_log (created_at, action, request_id, customer_name, detail) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (datetime.now(timezone.utc).strftime(SQL_DATETIME), action, request_id, customer_name, detail),
+    )
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
@@ -113,6 +148,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
         )
         conn.commit()
         print("  migrated: added mail_status")
+
+    # Safe to run unconditionally on every startup: by this point the column
+    # exists, whichever path put it there, and IF NOT EXISTS makes
+    # re-creating an already-present index a no-op.
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_rr_mail ON review_requests (mail_status)")
+    conn.commit()
 
 
 def _seed(conn: sqlite3.Connection) -> None:
@@ -163,7 +204,12 @@ def reset_db() -> int:
         # first run rather than continuing the sequence.
         conn.execute("DELETE FROM sqlite_sequence WHERE name = 'review_requests'")
         _seed(conn)
-        return conn.execute("SELECT COUNT(*) FROM review_requests").fetchone()[0]
+        count = conn.execute("SELECT COUNT(*) FROM review_requests").fetchone()[0]
+        # activity_log itself is untouched by a reset — the point is to see
+        # resets in the history, not to erase the history of resetting.
+        log_activity(conn, "data_reset", detail=f"{count} rows")
+        conn.commit()
+        return count
     finally:
         conn.close()
 

@@ -12,6 +12,14 @@ export function formatDate(iso) {
   return `${MONTHS[month - 1]} ${day}, ${year}`
 }
 
+/** Render a stored 'YYYY-MM-DD' date compactly, for chart axis labels. */
+export function formatShortDate(iso) {
+  if (!iso) return ''
+  const [, month, day] = iso.split('-').map(Number)
+  if (!month || !day) return iso
+  return `${MONTHS[month - 1]} ${day}`
+}
+
 /** Render an ISO instant from the API as a short local date + time. */
 export function formatDateTime(iso) {
   if (!iso) return ''
