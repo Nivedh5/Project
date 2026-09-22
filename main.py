@@ -34,7 +34,7 @@ EXCLUDE_BRANCHES = {
     for b in os.getenv("EXCLUDE_BRANCHES", "main,develop,staging,master").split(",")
     if b.strip()
 }
-PORT = int(os.getenv("PORT", "3000"))
+PORT = int(os.getenv("PORT") or "3000")
 
 # The scoring model, per the hackathon spec.
 SCORING_MODEL = "claude-sonnet-4-6"

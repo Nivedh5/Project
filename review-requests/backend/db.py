@@ -12,7 +12,13 @@ from datetime import datetime, timedelta, timezone
 
 from seed_data import SEED_ROWS
 
-DB_PATH = os.getenv("DB_PATH", os.path.join(os.path.dirname(__file__), "review_requests.db"))
+# Vercel's filesystem is read-only except /tmp, and /tmp doesn't persist
+# across cold starts — each cold start reseeds from SEED_ROWS, same as a
+# fresh local checkout.
+DB_PATH = os.getenv(
+    "DB_PATH",
+    "/tmp/review_requests.db" if os.getenv("VERCEL") else os.path.join(os.path.dirname(__file__), "review_requests.db"),
+)
 
 STATUS_REQUESTED = "Review Requested"
 STATUS_COMPLETED = "Completed"
