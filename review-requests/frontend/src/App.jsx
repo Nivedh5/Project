@@ -1,14 +1,18 @@
 import { useState } from 'react'
-import { Alert, Card } from 'antd'
+import { HistoryOutlined } from '@ant-design/icons'
+import { Alert, Button, Card } from 'antd'
 import styled from 'styled-components'
 import { DEFAULT_DIRECTION, STATUS_ALL, STATUS_REMINDABLE } from './constants.js'
 import { useReviewRequests } from './useReviewRequests.js'
+import { useTrend } from './useTrend.js'
+import ActivityLogDrawer from './components/ActivityLogDrawer.jsx'
 import ReminderAlerts from './components/ReminderAlerts.jsx'
 import RequestsTable from './components/RequestsTable.jsx'
 import ResetDataButton from './components/ResetDataButton.jsx'
 import SelectionActions from './components/SelectionActions.jsx'
 import StatsRow from './components/StatsRow.jsx'
 import Toolbar from './components/Toolbar.jsx'
+import TrendChart from './components/TrendChart.jsx'
 
 const Header = styled.header`
   background: ${({ theme }) => theme.color.blue};
@@ -36,6 +40,20 @@ const HeaderActions = styled.div`
   display: flex;
   align-items: center;
   gap: 14px;
+`
+
+const GhostButton = styled(Button)`
+  && {
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.45);
+    background: transparent;
+
+    &:hover {
+      color: #fff;
+      border-color: #fff;
+      background: rgba(255, 255, 255, 0.12);
+    }
+  }
 `
 
 const Main = styled.main`
@@ -78,9 +96,12 @@ export default function App() {
     setAutoSend,
     reminderSchedule,
     setReminderSchedule,
+    reloadKey,
   } = useReviewRequests()
+  const { weeks: trendWeeks, loading: trendLoading } = useTrend(reloadKey)
 
   const [selectedIds, setSelectedIds] = useState([])
+  const [activityLogOpen, setActivityLogOpen] = useState(false)
 
   /** Jump straight to the rows the notification is talking about. */
   function showAvailable() {
@@ -121,13 +142,20 @@ export default function App() {
           <PageTitle>Review Requests</PageTitle>
         </div>
         <HeaderActions>
+          <GhostButton icon={<HistoryOutlined />} onClick={() => setActivityLogOpen(true)}>
+            Activity log
+          </GhostButton>
           <ResetDataButton onReset={resetData} />
           <ReminderAlerts count={stats?.remindable ?? 0} onShowAvailable={showAvailable} />
         </HeaderActions>
       </Header>
 
+      <ActivityLogDrawer open={activityLogOpen} onClose={() => setActivityLogOpen(false)} />
+
       <Main>
         <StatsRow stats={stats} />
+
+        <TrendChart weeks={trendWeeks} loading={trendLoading} />
 
         {error ? <ErrorAlert type="error" showIcon message={error} /> : null}
 

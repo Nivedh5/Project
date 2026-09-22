@@ -67,7 +67,15 @@ export function useReviewRequests() {
     const controller = new AbortController()
     setLoading(true)
     fetchReviewRequests(
-      { search: debouncedSearch, status, mailStatus, sort, direction, page, pageSize: PAGE_SIZE },
+      {
+        search: debouncedSearch,
+        status,
+        mailStatus,
+        sort,
+        direction,
+        page,
+        pageSize: PAGE_SIZE,
+      },
       controller.signal,
     )
       .then((payload) => {
@@ -174,5 +182,8 @@ export function useReviewRequests() {
     setAutoSend,
     reminderSchedule,
     setReminderSchedule,
+    // Exposed so other data views (the trend chart) can refresh in step with
+    // writes made here, without duplicating reset/remind logic of their own.
+    reloadKey,
   }
 }

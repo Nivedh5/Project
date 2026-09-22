@@ -51,3 +51,13 @@ export function sendAllReminders(search) {
 export function sendReminder(id) {
   return apiJson(`/api/review-requests/${id}/remind`, { method: 'POST' })
 }
+
+export function fetchTrend(weeks, signal) {
+  const params = new URLSearchParams({ weeks: String(weeks) })
+  return apiJson(`/api/review-requests/trend?${params}`, { signal })
+}
+
+export function fetchActivityLog(limit, signal) {
+  const params = new URLSearchParams({ limit: String(limit) })
+  return apiJson(`/api/activity-log?${params}`, { signal })
+}

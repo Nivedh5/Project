@@ -40,6 +40,7 @@ from db import (
     STATUS_REQUESTED,
     connect,
     init_db,
+    log_activity,
     reset_db,
 )
 
@@ -108,7 +109,9 @@ app.add_middleware(
 # Query building
 # ---------------------------------------------------------------------------
 def _filter_clause(
-    search: str, status: str | None, mail_status: str | None = None
+    search: str,
+    status: str | None,
+    mail_status: str | None = None,
 ) -> tuple[str, list]:
     """Build the shared WHERE fragment for the list and stats queries."""
     clauses: list[str] = []
@@ -361,6 +364,9 @@ def send_reminder(request_id: int):
                 status_code=409,
                 detail=f"No reminders left — all {MAX_REMINDERS} have been sent",
             )
+
+        log_activity(conn, "reminder_sent", request_id=request_id, customer_name=row["customer_name"])
+        conn.commit()
     finally:
         conn.close()
 
@@ -397,6 +403,15 @@ def remind_all(search: str = Query("", max_length=200)):
         )
         conn.commit()
         sent = cursor.rowcount
+
+        if sent:
+            log_activity(
+                conn,
+                "reminders_bulk_sent",
+                detail=f"{sent} reminder{'s' if sent != 1 else ''}"
+                + (f" (search: {search.strip()!r})" if search.strip() else ""),
+            )
+            conn.commit()
     finally:
         conn.close()
 
@@ -442,10 +457,95 @@ def record_mail_event(request_id: int, payload: MailEvent):
         updated = conn.execute(
             "SELECT * FROM review_requests WHERE id = ?", (request_id,)
         ).fetchone()
+
+        log_activity(conn, "mail_event", request_id=request_id, customer_name=row["customer_name"], detail=event)
+        conn.commit()
     finally:
         conn.close()
 
     return _row_to_dict(updated)
+
+
+@app.get("/api/review-requests/trend")
+def review_request_trend(weeks: int = Query(13, ge=1, le=52)):
+    """Weekly completion/bounce rate, most recent `weeks` weeks.
+
+    Bucketed by week rather than by day: at demo scale (tens of rows spread
+    over months) a daily line is mostly zeros between sparse points. Weekly
+    buckets are where the direction — better or worse than before — actually
+    shows up. Each bucket is keyed by its Monday, and buckets with no requests
+    are filled in as zero so the line has no gaps.
+    """
+    conn = connect()
+    try:
+        # SQLite's 'weekday 1' modifier finds the next Monday on/after the
+        # date; '-7 days' backs it up to the start of *that* week (or the
+        # current week, if the date already fell on one).
+        rows = conn.execute(
+            f"""SELECT date(date_requested, 'weekday 1', '-7 days') AS week_start,
+                       COUNT(*)             AS total,
+                       SUM(status = ?)      AS completed,
+                       SUM(mail_status = ?) AS bounced
+                FROM review_requests
+                WHERE date_requested >= date('now', 'weekday 1', '-7 days', '-{(weeks - 1) * 7} days')
+                GROUP BY week_start""",
+            (STATUS_COMPLETED, MAIL_BOUNCED),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    by_week = {r["week_start"]: r for r in rows}
+
+    this_week_start = datetime.now(timezone.utc).date()
+    this_week_start -= timedelta(days=this_week_start.weekday())  # back up to Monday
+
+    weekly = []
+    for i in range(weeks - 1, -1, -1):
+        week_start = (this_week_start - timedelta(weeks=i)).isoformat()
+        row = by_week.get(week_start)
+        total = row["total"] if row else 0
+        completed = row["completed"] if row else 0
+        bounced = row["bounced"] if row else 0
+        weekly.append({
+            "week_start": week_start,
+            "total": total,
+            "completed": completed,
+            "bounced": bounced,
+            "completion_rate": round(completed / total * 100, 1) if total else None,
+            "bounce_rate": round(bounced / total * 100, 1) if total else None,
+        })
+
+    return {"weeks": weekly}
+
+
+@app.get("/api/activity-log")
+def activity_log(limit: int = Query(50, ge=1, le=200)):
+    """Most recent history first — every reminder, reset and mail event,
+    logged alongside the write that caused it."""
+    conn = connect()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM activity_log ORDER BY created_at DESC, id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    return {
+        "entries": [
+            {
+                "id": r["id"],
+                # 'T' separator, not the stored space — Date parsing of
+                # "YYYY-MM-DD HH:MM:SSZ" isn't reliable across browsers.
+                "created_at": r["created_at"].replace(" ", "T") + "Z",
+                "action": r["action"],
+                "request_id": r["request_id"],
+                "customer_name": r["customer_name"],
+                "detail": r["detail"],
+            }
+            for r in rows
+        ]
+    }
 
 
 # Serve the built UI from the API when it exists, so `npm run build` gives a
