@@ -1,6 +1,10 @@
 {
   "builds": [
-    { "src": "review-requests/backend/main.py", "use": "@vercel/python" },
+    {
+      "src": "review-requests/backend/main.py",
+      "use": "@vercel/python",
+      "config": { "includeFiles": "review-requests/backend/**" }
+    },
     {
       "src": "review-requests/frontend/package.json",
       "use": "@vercel/static-build",
