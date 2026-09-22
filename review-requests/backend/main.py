@@ -9,8 +9,16 @@ Run:  python main.py      # http://localhost:3001
 """
 
 import os
+import sys
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+
+# Vercel loads this file via importlib from its absolute path rather than
+# running it as a script, which — unlike `python main.py` — does not add
+# this directory to sys.path. Without this, `from db import ...` below
+# fails with ModuleNotFoundError in that environment even though it works
+# locally.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query
