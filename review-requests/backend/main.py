@@ -35,7 +35,7 @@ from db import (
     reset_db,
 )
 
-PORT = int(os.getenv("PORT", "3001"))
+PORT = int(os.getenv("PORT") or "3001")
 PAGE_SIZE = 15
 MAX_PAGE_SIZE = 100
 
