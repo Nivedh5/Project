@@ -1,0 +1,15 @@
+{
+  "builds": [
+    { "src": "review-requests/backend/main.py", "use": "@vercel/python" },
+    {
+      "src": "review-requests/frontend/package.json",
+      "use": "@vercel/static-build",
+      "config": { "distDir": "dist" }
+    }
+  ],
+  "routes": [
+    { "src": "/api/(.*)", "dest": "review-requests/backend/main.py" },
+    { "handle": "filesystem" },
+    { "src": "/(.*)", "dest": "review-requests/frontend/dist/index.html" }
+  ]
+}
