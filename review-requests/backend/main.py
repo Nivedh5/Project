@@ -56,14 +56,34 @@ MAX_PAGE_SIZE = 100
 
 CHAT_MODEL = "claude-haiku-4-5-20251001"
 
-# Used whenever a request is created without its own subject/message — the
-# form endpoint never collects either, and the chat assistant falls back to
-# these if the user has no preference of their own.
-DEFAULT_SUBJECT = "Your Feedback is Valuable!"
-DEFAULT_MESSAGE = (
-    "Thanks so much for working with us. We'd love to hear your thoughts — "
-    "your feedback helps us keep providing the best experience possible."
-)
+# Offered to the user as ready-made choices for the email's subject/message.
+# The chat assistant presents all three; the form endpoint (which never
+# collects either) falls back to the first one when neither is supplied.
+DEFAULT_TEMPLATES = [
+    {
+        "label": "Friendly",
+        "subject": "Your Feedback is Valuable!",
+        "message": (
+            "Thanks so much for working with us. We'd love to hear your thoughts — "
+            "your feedback helps us keep providing the best experience possible."
+        ),
+    },
+    {
+        "label": "Professional",
+        "subject": "We'd Appreciate Your Review",
+        "message": (
+            "Thank you for choosing us. If you have a moment, we'd be grateful if "
+            "you could share your experience in a quick review."
+        ),
+    },
+    {
+        "label": "Short & casual",
+        "subject": "Got 30 seconds?",
+        "message": "Loved working with you! Mind leaving a quick review? It really helps.",
+    },
+]
+DEFAULT_SUBJECT = DEFAULT_TEMPLATES[0]["subject"]
+DEFAULT_MESSAGE = DEFAULT_TEMPLATES[0]["message"]
 
 # The one action the chat assistant can take — everything else is just
 # conversation. Kept to a single tool so there's no ambiguity about what
@@ -97,11 +117,12 @@ after the user has explicitly confirmed.
 What you need, in order:
 1. The customer's name.
 2. The customer's email address.
-3. A subject line and message body for the email. Offer this default and use it \
-if the user is happy with it, doesn't care, or doesn't answer the question — \
-don't stall here:
-   Subject: "{DEFAULT_SUBJECT}"
-   Message: "{DEFAULT_MESSAGE}"
+3. A subject line and message body for the email. Once you have the name and \
+email, present these three ready-made options, numbered, so the user can just \
+reply with a number — or they can describe their own subject/message instead:
+{chr(10).join(f'{i}. {t["label"]} — Subject: "{t["subject"]}" Message: "{t["message"]}"' for i, t in enumerate(DEFAULT_TEMPLATES, 1))}
+If the user doesn't care or doesn't answer, pick option 1 yourself and move on \
+— don't stall here.
 
 Rules:
 - Ask for whatever is still missing, one thing at a time. Keep every reply short \
