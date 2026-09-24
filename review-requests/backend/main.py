@@ -9,6 +9,7 @@ Run:  python main.py      # http://localhost:3001
 """
 
 import os
+import re
 import sys
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -104,10 +105,10 @@ don't stall here:
 
 Rules:
 - Ask for whatever is still missing, one thing at a time. Keep every reply short \
-(one to three sentences) — this is a chat panel, not an essay.
+(one to three sentences) — this is a compact panel, not an essay.
 - Reply in plain text only — no markdown (no **bold**, no #headers, no bullet \
-dashes). The chat bubble renders exactly what you send, asterisks included. For \
-the summary, put each field on its own line as "Label: value".
+dashes). It renders exactly what you send, asterisks included. For the summary, \
+put each field on its own line as "Label: value".
 - Once you have all four (name, email, subject, message), show the user a short \
 summary of exactly what you're about to send and ask them to confirm.
 - Only call create_review_request after the user replies affirmatively (e.g. \
@@ -118,6 +119,13 @@ show the summary again before sending.
 - If an email address looks malformed, point that out and ask for a corrected \
 one instead of proceeding.
 - Stay on topic: politely decline anything unrelated to sending this review request.
+
+Progress tag — this drives a step tracker in the UI, so it must be exact:
+the FIRST line of every reply (when you are not calling the tool) must be \
+exactly one of these three lines, followed by a blank line, then your reply:
+STAGE: details   — you still need the customer's name and/or email.
+STAGE: message   — you have name and email; you're settling the subject/message.
+STAGE: confirm   — you have all four and are showing the summary, awaiting yes/no.
 """
 
 _anthropic_client: Anthropic | None = None
@@ -417,6 +425,23 @@ def _create_review_request(payload: NewReviewRequest) -> dict:
     return _row_to_dict(row, now)
 
 
+_STAGE_TAG_RE = re.compile(r"^\s*STAGE:\s*(details|message|confirm)\s*\n+", re.IGNORECASE)
+
+
+def _split_stage(text: str) -> tuple[str, str]:
+    """Pull the model's own progress tag off the front of its reply.
+
+    The tag drives the step tracker in the UI. If the model ever forgets it
+    (a plain-text model has no hard guarantee like a tool schema does), fall
+    back to "details" rather than erroring — an under-advanced step tracker
+    is a cosmetic miss, not a broken conversation.
+    """
+    match = _STAGE_TAG_RE.match(text)
+    if not match:
+        return "details", text.strip()
+    return match.group(1).lower(), text[match.end():].strip()
+
+
 class ChatMessage(BaseModel):
     role: str
     content: str
@@ -455,7 +480,8 @@ def chat_review_request(payload: ChatRequest):
     tool_use = next((block for block in response.content if block.type == "tool_use"), None)
 
     if tool_use is None:
-        return {"reply": reply_text or "Could you tell me more?", "done": False, "request": None}
+        stage, reply = _split_stage(reply_text or "STAGE: details\n\nCould you tell me more?")
+        return {"reply": reply, "done": False, "request": None, "stage": stage}
 
     try:
         row = _create_review_request(
@@ -471,12 +497,14 @@ def chat_review_request(payload: ChatRequest):
             "reply": f"I couldn't send that: {exc.detail} Could you give me the correct details?",
             "done": False,
             "request": None,
+            "stage": "confirm",
         }
 
+    _, reply_text = _split_stage(reply_text) if reply_text else (None, "")
     reply = reply_text or (
         f"Done! I've sent a review request to {row['customer_name']} at {row['customer_email']}."
     )
-    return {"reply": reply, "done": True, "request": row}
+    return {"reply": reply, "done": True, "request": row, "stage": "sent"}
 
 
 @app.get("/api/review-requests/stats")
