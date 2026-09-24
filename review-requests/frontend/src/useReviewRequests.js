@@ -185,5 +185,8 @@ export function useReviewRequests() {
     // Exposed so other data views (the trend chart) can refresh in step with
     // writes made here, without duplicating reset/remind logic of their own.
     reloadKey,
+    // For writes made outside this hook (creating a new request) that still
+    // need the list, tiles and trend chart to pick up the change.
+    reload,
   }
 }

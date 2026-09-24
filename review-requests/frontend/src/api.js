@@ -14,6 +14,24 @@ async function apiJson(path, options) {
   return res.json()
 }
 
+export function createReviewRequest(customerName, customerEmail) {
+  return apiJson('/api/review-requests', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ customer_name: customerName, customer_email: customerEmail }),
+  })
+}
+
+// `messages` is the running conversation ({ role, content }[]); the caller
+// resends it in full each turn since the assistant itself is stateless.
+export function chatReviewRequest(messages) {
+  return apiJson('/api/review-requests/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages }),
+  })
+}
+
 // Every list parameter goes to the server: the API returns one page of rows,
 // already filtered and sorted, and the browser renders exactly what it gets.
 export function fetchReviewRequests(

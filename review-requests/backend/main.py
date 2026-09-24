@@ -21,14 +21,19 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import uvicorn
+from anthropic import Anthropic
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+load_dotenv()
+
 from db import (
     DB_PATH,
     MAIL_BOUNCED,
+    MAIL_NOT_OPENED,
     MAIL_OPENED,
     MAIL_STATUSES,
     MAX_REMINDERS,
@@ -47,6 +52,88 @@ from db import (
 PORT = int(os.getenv("PORT") or "3001")
 PAGE_SIZE = 15
 MAX_PAGE_SIZE = 100
+
+CHAT_MODEL = "claude-haiku-4-5-20251001"
+
+# Used whenever a request is created without its own subject/message — the
+# form endpoint never collects either, and the chat assistant falls back to
+# these if the user has no preference of their own.
+DEFAULT_SUBJECT = "Your Feedback is Valuable!"
+DEFAULT_MESSAGE = (
+    "Thanks so much for working with us. We'd love to hear your thoughts — "
+    "your feedback helps us keep providing the best experience possible."
+)
+
+# The one action the chat assistant can take — everything else is just
+# conversation. Kept to a single tool so there's no ambiguity about what
+# "done" means: the tool call itself is the completion signal.
+CHAT_TOOLS = [
+    {
+        "name": "create_review_request",
+        "description": (
+            "Send a review request email to a customer. Call this only after the "
+            "user has explicitly confirmed the name, email, subject and message "
+            "you're about to send."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "customer_name": {"type": "string", "description": "The customer's full name"},
+                "customer_email": {"type": "string", "description": "The customer's email address"},
+                "subject": {"type": "string", "description": "The email's subject line"},
+                "message": {"type": "string", "description": "The email's body"},
+            },
+            "required": ["customer_name", "customer_email", "subject", "message"],
+        },
+    }
+]
+
+CHAT_SYSTEM_PROMPT = f"""You are a friendly assistant embedded in the "Request a Review" \
+panel of a review-management dashboard. Your job is to collect the details of a \
+review request email through brief, natural conversation, then send it — but only \
+after the user has explicitly confirmed.
+
+What you need, in order:
+1. The customer's name.
+2. The customer's email address.
+3. A subject line and message body for the email. Offer this default and use it \
+if the user is happy with it, doesn't care, or doesn't answer the question — \
+don't stall here:
+   Subject: "{DEFAULT_SUBJECT}"
+   Message: "{DEFAULT_MESSAGE}"
+
+Rules:
+- Ask for whatever is still missing, one thing at a time. Keep every reply short \
+(one to three sentences) — this is a chat panel, not an essay.
+- Reply in plain text only — no markdown (no **bold**, no #headers, no bullet \
+dashes). The chat bubble renders exactly what you send, asterisks included. For \
+the summary, put each field on its own line as "Label: value".
+- Once you have all four (name, email, subject, message), show the user a short \
+summary of exactly what you're about to send and ask them to confirm.
+- Only call create_review_request after the user replies affirmatively (e.g. \
+"yes", "send it", "looks good") to that summary. Never call it in the same turn \
+you first show the summary, even if you're confident every detail is right.
+- If the user asks to change something after seeing the summary, update it and \
+show the summary again before sending.
+- If an email address looks malformed, point that out and ask for a corrected \
+one instead of proceeding.
+- Stay on topic: politely decline anything unrelated to sending this review request.
+"""
+
+_anthropic_client: Anthropic | None = None
+
+
+def _get_anthropic_client() -> Anthropic:
+    global _anthropic_client
+    if _anthropic_client is None:
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise HTTPException(
+                status_code=500,
+                detail="ANTHROPIC_API_KEY is not configured on the server",
+            )
+        _anthropic_client = Anthropic(api_key=api_key)
+    return _anthropic_client
 
 # Whitelist of sortable columns. Anything not in here is rejected, so the
 # client-supplied sort key can never reach the SQL string as arbitrary text.
@@ -192,6 +279,8 @@ def _row_to_dict(row, now: datetime | None = None) -> dict:
         "id": row["id"],
         "customer_name": row["customer_name"],
         "customer_email": row["customer_email"],
+        "subject": row["subject"],
+        "message": row["message"],
         "star_rating": row["star_rating"],
         "date_requested": row["date_requested"],
         "date_completed": row["date_completed"],
@@ -259,6 +348,135 @@ def list_review_requests(
         "total": total,
         "total_pages": total_pages,
     }
+
+
+class NewReviewRequest(BaseModel):
+    customer_name: str
+    customer_email: str
+    subject: str | None = None
+    message: str | None = None
+
+
+@app.post("/api/review-requests")
+def create_review_request(payload: NewReviewRequest):
+    """Send a brand-new review request to a customer.
+
+    This is the one gap every other feature here assumed was already
+    solved: nothing previously let a real new customer enter the system —
+    the table was only ever the seeded demo dataset.
+    """
+    return _create_review_request(payload)
+
+
+# Shared by the form-style endpoint above and the chat assistant below, so
+# both paths enforce the same validation and quota rules through one place.
+def _create_review_request(payload: NewReviewRequest) -> dict:
+    name = payload.customer_name.strip()
+    email = payload.customer_email.strip()
+    subject = (payload.subject or "").strip() or DEFAULT_SUBJECT
+    message = (payload.message or "").strip() or DEFAULT_MESSAGE
+    if not name:
+        raise HTTPException(status_code=400, detail="Customer name is required")
+    if "@" not in email or not email:
+        raise HTTPException(status_code=400, detail="A valid customer email is required")
+
+    conn = connect()
+    try:
+        # Same rule the quota tile already displays — enforced here, not
+        # just shown, so the tile's number is a promise the API keeps.
+        monthly_used = conn.execute(
+            "SELECT COUNT(*) AS n FROM review_requests "
+            "WHERE requested_at >= datetime('now', 'start of month')"
+        ).fetchone()["n"]
+        if monthly_used >= MONTHLY_REQUEST_LIMIT:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Monthly send quota reached ({MONTHLY_REQUEST_LIMIT} requests)",
+            )
+
+        now = datetime.now(timezone.utc)
+        cursor = conn.execute(
+            """INSERT INTO review_requests
+                   (customer_name, customer_email, date_requested, requested_at,
+                    status, mail_status, subject, message)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (name, email, now.date().isoformat(), now.strftime(SQL_DATETIME),
+             STATUS_REQUESTED, MAIL_NOT_OPENED, subject, message),
+        )
+        conn.commit()
+
+        log_activity(conn, "request_created", request_id=cursor.lastrowid, customer_name=name)
+        conn.commit()
+
+        row = conn.execute(
+            "SELECT * FROM review_requests WHERE id = ?", (cursor.lastrowid,)
+        ).fetchone()
+    finally:
+        conn.close()
+
+    return _row_to_dict(row, now)
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    messages: list[ChatMessage]
+
+
+@app.post("/api/review-requests/chat")
+def chat_review_request(payload: ChatRequest):
+    """One turn of the "Request a Review" chat assistant.
+
+    Stateless by design: the caller resends the whole conversation each
+    turn, and the model itself decides when it has enough to act by
+    calling `create_review_request` — that tool call is the only signal
+    the request actually went out, so the reply text is never parsed for
+    intent.
+    """
+    client = _get_anthropic_client()
+
+    try:
+        response = client.messages.create(
+            model=CHAT_MODEL,
+            max_tokens=400,
+            system=CHAT_SYSTEM_PROMPT,
+            tools=CHAT_TOOLS,
+            messages=[{"role": m.role, "content": m.content} for m in payload.messages],
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Assistant is unavailable: {exc}")
+
+    reply_text = "".join(
+        block.text for block in response.content if block.type == "text"
+    ).strip()
+    tool_use = next((block for block in response.content if block.type == "tool_use"), None)
+
+    if tool_use is None:
+        return {"reply": reply_text or "Could you tell me more?", "done": False, "request": None}
+
+    try:
+        row = _create_review_request(
+            NewReviewRequest(
+                customer_name=tool_use.input.get("customer_name", ""),
+                customer_email=tool_use.input.get("customer_email", ""),
+                subject=tool_use.input.get("subject"),
+                message=tool_use.input.get("message"),
+            )
+        )
+    except HTTPException as exc:
+        return {
+            "reply": f"I couldn't send that: {exc.detail} Could you give me the correct details?",
+            "done": False,
+            "request": None,
+        }
+
+    reply = reply_text or (
+        f"Done! I've sent a review request to {row['customer_name']} at {row['customer_email']}."
+    )
+    return {"reply": reply, "done": True, "request": row}
 
 
 @app.get("/api/review-requests/stats")

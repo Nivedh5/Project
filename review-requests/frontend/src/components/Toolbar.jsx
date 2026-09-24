@@ -1,8 +1,10 @@
 import { useState } from 'react'
+import { PlusOutlined } from '@ant-design/icons'
 import { App, Button, Input, Popconfirm, Segmented, Select, Spin, Switch } from 'antd'
 import styled from 'styled-components'
 import { MAIL_FILTERS, STATUS_FILTERS } from '../constants.js'
 import AutoSendDrawer from './AutoSendDrawer.jsx'
+import RequestReviewDrawer from './RequestReviewDrawer.jsx'
 
 const Bar = styled.div`
   display: flex;
@@ -21,6 +23,9 @@ const SearchInput = styled(Input)`
 // Pushed to the far right of the toolbar.
 const BulkWrap = styled.div`
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 `
 
 const AutoSendWrap = styled.label`
@@ -61,10 +66,12 @@ export default function Toolbar({
   onAutoSendChange,
   reminderSchedule,
   onReminderScheduleChange,
+  onRequestCreated,
 }) {
   const { message } = App.useApp()
   const [sending, setSending] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [requestReviewOpen, setRequestReviewOpen] = useState(false)
 
   // Turning the toggle on opens the schedule drawer instead of enabling
   // auto-send outright — it only goes live once a schedule is saved.
@@ -148,6 +155,10 @@ export default function Toolbar({
       {/* Sends to every eligible row at once, rather than one click per row.
           Bulk mail going out is worth a confirmation step. */}
       <BulkWrap>
+        <Button icon={<PlusOutlined />} onClick={() => setRequestReviewOpen(true)}>
+          Request a Review
+        </Button>
+
         <Popconfirm
           title="Send all reminders"
           description={
@@ -171,6 +182,12 @@ export default function Toolbar({
         initialSchedule={reminderSchedule}
         onCancel={() => setDrawerOpen(false)}
         onSave={saveSchedule}
+      />
+
+      <RequestReviewDrawer
+        open={requestReviewOpen}
+        onClose={() => setRequestReviewOpen(false)}
+        onCreated={onRequestCreated}
       />
     </Bar>
   )

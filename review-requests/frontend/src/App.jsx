@@ -97,6 +97,7 @@ export default function App() {
     reminderSchedule,
     setReminderSchedule,
     reloadKey,
+    reload,
   } = useReviewRequests()
   const { weeks: trendWeeks, loading: trendLoading } = useTrend(reloadKey)
 
@@ -175,6 +176,7 @@ export default function App() {
             onAutoSendChange={setAutoSend}
             reminderSchedule={reminderSchedule}
             onReminderScheduleChange={setReminderSchedule}
+            onRequestCreated={reload}
           />
 
           <SelectionActions

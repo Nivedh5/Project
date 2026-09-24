@@ -63,7 +63,11 @@ CREATE TABLE IF NOT EXISTS review_requests (
     -- the new allowance instead of stranding rows on the old one.
     reminders_used INTEGER NOT NULL DEFAULT 0 CHECK (reminders_used >= 0),
     mail_status    TEXT    NOT NULL DEFAULT 'Not Opened'
-                   CHECK (mail_status IN ('Not Opened', 'Opened', 'Bounced'))
+                   CHECK (mail_status IN ('Not Opened', 'Opened', 'Bounced')),
+    -- What the request email actually said. Null on rows seeded before this
+    -- column existed — there was never a real message behind those sends.
+    subject        TEXT,
+    message        TEXT
 );
 
 -- Search hits name/email, and every list query filters on status, so both are
@@ -148,6 +152,16 @@ def _migrate(conn: sqlite3.Connection) -> None:
         )
         conn.commit()
         print("  migrated: added mail_status")
+
+    if "subject" not in existing:
+        conn.execute("ALTER TABLE review_requests ADD COLUMN subject TEXT")
+        conn.commit()
+        print("  migrated: added subject")
+
+    if "message" not in existing:
+        conn.execute("ALTER TABLE review_requests ADD COLUMN message TEXT")
+        conn.commit()
+        print("  migrated: added message")
 
     # Safe to run unconditionally on every startup: by this point the column
     # exists, whichever path put it there, and IF NOT EXISTS makes

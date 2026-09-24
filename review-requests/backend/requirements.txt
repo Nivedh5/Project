@@ -1,2 +1,4 @@
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
+anthropic==1.8.0
+python-dotenv==1.2.3

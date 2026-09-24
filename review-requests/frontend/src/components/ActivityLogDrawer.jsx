@@ -51,6 +51,7 @@ const CenteredSpin = styled.div`
 // Human-readable per action, kept separate from the raw value the server
 // logs so the wording can change without touching stored history.
 const ACTION_LABEL = {
+  request_created: 'Review requested',
   reminder_sent: 'Reminder sent',
   reminders_bulk_sent: 'Bulk reminders sent',
   mail_event: 'Mail event',
